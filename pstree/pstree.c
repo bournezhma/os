@@ -5,18 +5,44 @@
 #include <ctype.h>
 #include <string.h>
 
-#define MAX_PROCS 256
+#define MAX_PROCS 512
 
-struct ps_tree {
+struct ps_node {
     __pid_t pid;
-    struct ps_tree **child;   
+    struct ps_node *parent;
+    struct ps_node *child; 
+    struct ps_node *sibling;  
 };
 
 struct procs_affi {
     __pid_t pid;
     __pid_t ppid;
-    struct ps_tree *node;
+    struct ps_node *node;
 };
+
+struct ps_node*
+create_node(int pid) {
+    struct ps_node *new_node = (struct ps_node *) malloc(sizeof(struct ps_node));
+
+    new_node->pid = pid;
+    new_node->child = NULL;
+    new_node->parent = NULL;
+    new_node->sibling = NULL;
+
+    return new_node;
+}
+
+void
+add_child(struct ps_node *parent, struct ps_node *child) {
+    if (parent->child == NULL) {
+        parent->child = child;
+    } else {
+        struct ps_node *sibling = parent->child;
+        for (; sibling->sibling != NULL; sibling = sibling->sibling);
+        sibling->sibling = child; 
+    }
+    child->parent = parent;
+}
 
 void
 parse_args(int argc, char *argv[])
@@ -82,55 +108,56 @@ get_index(struct procs_affi pa[], int proc_num, int pid) {
             return i;
         }
     }
+
+    return -1;
 }
 
-
 int
-create_tree(struct ps_tree *root, struct procs_affi pa[], int proc_num) {
+populate_tree(struct ps_node *root, struct procs_affi pa[], int proc_num) {
     int i, j, index;
     __pid_t pid, ppid;
-    struct ps_tree *pst;
+    struct ps_node *child, *parent;
 
     for (i = 0; i < proc_num; i++) {
         pid = pa[i].pid;
         ppid = pa[i].ppid;
-        pst = malloc(sizeof(struct ps_tree));
-        pst->pid = pid;
-        pst->child = NULL;
-        pa[i].node = pst;
-        if (pid == 1) {
-            root = pst;
-        } else {
-            index = get_index(pa, proc_num, ppid); 
-            for (j = 0; pa[index].node->child[j] != NULL; j++);
-            pa[index].node->child[j] = pst;
-            pa[index].node->child[j+1] = NULL;
-        }
+
+        child = create_node(pid);
+        pa[i].node = child;
+
+        index = get_index(pa, proc_num, ppid);
+        parent = (index == -1) ? root : pa[index].node;
+        add_child(parent, child);
     }
+
     return 0;
 }
 
 void
-print_tree(struct ps_tree *root) {
+print_tree(struct ps_node *node, int level) {
     int i;
 
-    if (root->child == NULL) {
-        printf("%d\n", root->pid);
-        free(root);
-    } else {
-        for (i = 0; root->child[i] != NULL; i++) {
-            print_tree(root->child[i]);
-        }
-        printf("%d\n", root->pid);
-        free(root);
+    for (i = 0; i < level; i++) {
+        printf("  ");
     }
+    printf("|--%d\n", node->pid);
+    
+    if (node->child != NULL) {
+        print_tree(node->child, level + 1);
+    }
+
+    if (node->sibling != NULL) {
+        print_tree(node->sibling, level);
+    }
+
+    free(node);
 }
 
 int 
 main(int argc, char *argv[]) {
     struct procs_affi pa[MAX_PROCS];
     int proc_num;
-    struct ps_tree *root;
+    struct ps_node *root;
 
     // 1. 解析参数
     parse_args(argc, argv);
@@ -142,9 +169,10 @@ main(int argc, char *argv[]) {
     }
 
     // 3. 在内存中建树
-    create_tree(root, pa, proc_num);
+    root = create_node(0);
+    populate_tree(root, pa, proc_num);
 
-    print_tree(root); 
+    print_tree(root->child, 0); 
 
     return 0;
 }
